@@ -1,0 +1,147 @@
+#define BLYNK_TEMPLATE_ID "TMPL3N8YWUHHy"     
+#define BLYNK_TEMPLATE_NAME "Oximeter"  
+
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include "HTTPSRedirect.h"
+#include <Wire.h>
+#include "MAX30100_PulseOximeter.h"
+#define BLYNK_PRINT Serial
+#include <Blynk.h>
+#include <BlynkSimpleEsp8266.h>
+#include "Adafruit_GFX.h"
+#include "OakOLED.h"
+
+// Define Blynk authentication token, WiFi credentials, and other constants
+char auth[] = "0yi-geYsp9O_lbmRMxi5ELtSQMBNWyu7";
+char ssid[] = "Betty";
+char pass[] = "uztz2486";
+const char* host = "script.google.com";
+const int httpsPort = 443;
+const char* GScriptId = "AKfycby5nPUhynvn2w30062VM5JprlOGSat6foswVPdhAm4u1ymbsT07GMCx1Ci7251Yc9BR";
+String payload_base = "{\"command\": \"insert_row\", \"sheet_name\": \"Sheet1\", \"values\": ";
+String url = String("/macros/s/") + GScriptId + "/exec";
+HTTPSRedirect* client = nullptr;
+
+// Define variables for pulse oximeter
+float BPM, SpO2;
+uint32_t tsLastReport = 0;
+const unsigned char bitmap [] PROGMEM = { /* bitmap data */ };
+
+// Declare OLED object
+OakOLED oled;
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(115200);
+
+  // Initialize Blynk
+  Blynk.begin(auth, ssid, pass);
+
+  // Initialize OLED display
+  oled.begin();
+  oled.clearDisplay();
+  oled.setTextSize(1);
+  oled.setTextColor(1);
+  oled.setCursor(0, 0);
+  oled.println("Initializing pulse oximeter..");
+  oled.display();
+
+  // Initialize pulse oximeter
+  if (!pox.begin()) {
+    Serial.println("FAILED");
+    oled.clearDisplay();
+    oled.setTextSize(1);
+    oled.setTextColor(1);
+    oled.setCursor(0, 0);
+    oled.println("FAILED");
+    oled.display();
+    for (;;);
+  } else {
+    oled.clearDisplay();
+    oled.setTextSize(1);
+    oled.setTextColor(1);
+    oled.setCursor(0, 0);
+    oled.println("SUCCESS");
+    oled.display();
+    Serial.println("SUCCESS");
+    pox.setOnBeatDetectedCallback(onBeatDetected);
+  }
+}
+
+void loop() {
+  // Update pulse oximeter and Blynk
+  pox.update();
+  Blynk.run();
+
+  // Get heart rate and SpO2 readings
+  BPM = pox.getHeartRate();
+  SpO2 = pox.getSpO2();
+
+  // Publish data to Google Sheets
+  publishToGoogleSheets();
+
+  // Display readings on OLED
+  displayReadingsOnOLED();
+}
+
+// Callback function for beat detection
+void onBeatDetected() {
+  Serial.println("Beat Detected!");
+  oled.drawBitmap(60, 20, bitmap, 28, 28, 1);
+  oled.display();
+}
+
+// Function to publish data to Google Sheets
+void publishToGoogleSheets() {
+  if (millis() - tsLastReport > REPORTING_PERIOD_MS) {
+    // Create payload for Google Sheets
+    String payload = payload_base + "\"" + BPM + "," + SpO2 + "\"}";
+
+    // Use HTTPSRedirect class to create a new TLS connection
+    client = new HTTPSRedirect(httpsPort);
+    client->setInsecure();
+    client->setPrintResponseBody(true);
+    client->setContentTypeHeader("application/json");
+
+    // Connect to Google Sheets
+    if (client->connect(host, httpsPort)) {
+      Serial.println("Connected to Google Sheets");
+      if (client->POST(url, host, payload)) {
+        Serial.println("Data sent to Google Sheets successfully");
+      } else {
+        Serial.println("Error sending data to Google Sheets");
+      }
+      client->stop();
+    } else {
+      Serial.println("Connection to Google Sheets failed");
+    }
+
+    tsLastReport = millis();
+  }
+}
+
+// Function to display readings on OLED
+void displayReadingsOnOLED() {
+  oled.clearDisplay();
+  oled.setTextSize(1);
+  oled.setTextColor(1);
+  oled.setCursor(0, 16);
+  oled.println(BPM);
+
+  oled.setTextSize(1);
+  oled.setTextColor(1);
+  oled.setCursor(0, 0);
+  oled.println("Heart BPM");
+
+  oled.setTextSize(1);
+  oled.setTextColor(1);
+  oled.setCursor(0, 30);
+  oled.println("SpO2");
+
+  oled.setTextSize(1);
+  oled.setTextColor(1);
+  oled.setCursor(0, 45);
+  oled.println(SpO2);
+  oled.display();
+}
